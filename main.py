@@ -1,6 +1,7 @@
 # main.py
 
 import hashlib
+import json
 import os
 import shutil
 import subprocess
@@ -50,14 +51,13 @@ jobs_dict = modal.Dict.from_name(JOBS_DICT_NAME, create_if_missing=True)
 # Image definition
 image = (
     modal.Image.debian_slim(python_version="3.13")
+    .apt_install("curl", "git")
     .run_commands(
-        "apt-get update",
-        "apt-get install -y curl git",
-        "curl -fsSL https://deb.nodesource.com/setup_20.x | bash -",
+        "curl -fsSL https://deb.nodesource.com/setup_20.x | bash -"
         "apt-get install -y nodejs",
         "npm install -g @anthropic-ai/claude-code",
     )
-    .pip_install("fastapi", "pydantic") # fastapi for web_asgi
+    .uv_pip_install("fastapi", "pydantic") # fastapi for web_asgi
 )
 
 # --- Pydantic Models for API ---
@@ -112,6 +112,7 @@ class SessionResultsResponse(BaseModel):
     session_id: str
     latest_job_id: Optional[str] = None
     output_files: List[OutputFileResult]
+    result_json: Optional[Dict[str, Any]] = None
 
 # --- Core Worker Function ---
 
@@ -177,6 +178,14 @@ def execute_job(session_id: str, job_id: str, request: Dict[str, Any]):
             if result.returncode != 0:
                 raise RuntimeError(f"Claude Code failed:\n{result.stderr}")
 
+            # Parse JSON stdout from Claude CLI if available
+            parsed_result: Optional[Dict[str, Any]] = None
+            try:
+                if result.stdout:
+                    parsed_result = json.loads(result.stdout)
+            except Exception:
+                parsed_result = None
+
             # 5. Clear previous output and copy new files to Volume
             if os.path.exists(session_output_dir):
                 shutil.rmtree(session_output_dir)
@@ -200,7 +209,8 @@ def execute_job(session_id: str, job_id: str, request: Dict[str, Any]):
             job_data.update({
                 "status": "succeeded",
                 "finished_at": finished_at.isoformat(),
-                "output_files": output_files_manifest
+                "output_files": output_files_manifest,
+                "result_json": parsed_result,
             })
             jobs_dict[job_id] = job_data
             
@@ -389,6 +399,7 @@ def fastapi_app():
             session_id=session_id,
             latest_job_id=latest_job_id,
             output_files=files,
+            result_json=job_data.get("result_json"),
         )
 
     @secure_app.get("/download")
