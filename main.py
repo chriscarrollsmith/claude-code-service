@@ -555,6 +555,9 @@ def main():
         print("   Output files:")
         for f in results_parsed.output_files:
             print(f"   - {f.path} ({f.size_bytes} bytes)")
+        if results_parsed.result_json is not None:
+            print("\n   JSON result:")
+            print(json.dumps(results_parsed.result_json, indent=2))
 
 
     # 5. Download a file
