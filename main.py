@@ -53,7 +53,7 @@ image = (
     modal.Image.debian_slim(python_version="3.13")
     .apt_install("curl", "git")
     .run_commands(
-        "curl -fsSL https://deb.nodesource.com/setup_20.x | bash -"
+        "curl -fsSL https://deb.nodesource.com/setup_20.x | bash -",
         "apt-get install -y nodejs",
         "npm install -g @anthropic-ai/claude-code",
     )
@@ -149,7 +149,7 @@ def execute_job(session_id: str, job_id: str, request: Dict[str, Any]):
             model = request.get("model")
             timeout_s = request.get("timeout_s", DEFAULT_JOB_TIMEOUT_S)
 
-            cmd = ["claude", "-p", prompt, "--output-format", "json", "--debug"]
+            cmd = ["claude", "-p", prompt, "--output-format", "json", "--allowedTools", "Read,Write,Edit,MultiEdit,Bash"]
             if model:
                 cmd.extend(["-m", model])
 
@@ -178,13 +178,29 @@ def execute_job(session_id: str, job_id: str, request: Dict[str, Any]):
             if result.returncode != 0:
                 raise RuntimeError(f"Claude Code failed:\n{result.stderr}")
 
-            # Parse JSON stdout from Claude CLI if available
+            # Parse JSON stdout from Claude CLI (supports JSON or JSON Lines)
             parsed_result: Optional[Dict[str, Any]] = None
-            try:
-                if result.stdout:
-                    parsed_result = json.loads(result.stdout)
-            except Exception:
-                parsed_result = None
+            stdout_text = (result.stdout or "").strip()
+            if stdout_text:
+                try:
+                    parsed_result = json.loads(stdout_text)
+                except Exception:
+                    parsed_stream: List[Dict[str, Any]] = []
+                    for line in stdout_text.splitlines():
+                        line_stripped = line.strip()
+                        if not line_stripped:
+                            continue
+                        try:
+                            obj = json.loads(line_stripped)
+                            if isinstance(obj, dict):
+                                parsed_stream.append(obj)
+                        except Exception:
+                            continue
+                    if parsed_stream:
+                        parsed_result = {
+                            "claude_stream": parsed_stream,
+                            "final": parsed_stream[-1],
+                        }
 
             # 5. Clear previous output and copy new files to Volume
             if os.path.exists(session_output_dir):
@@ -495,8 +511,8 @@ def main():
     print("\n[1] Creating session...")
     test_files = [
         FileInput(
-            path="src/math_utils.py",
-            content="def add(a, b):\n    return a + b\n"
+            path="src/test_script.py",
+            content="print('Hello, world!')"
         ),
         FileInput(
             path="README.md",
@@ -518,7 +534,10 @@ def main():
 
     # 2. Run a job
     print("\n[2] Running job...")
-    run_req = JobRunRequest(prompt="Add a function to subtract two numbers in math_utils.py")
+    run_req = JobRunRequest(prompt=(
+        "Attempt to run test_script.py using 'python' and 'uv run'.\n"
+        "Report the result in the JSON result. The goal is to test your permissions for running uv and python commands in the workspace."
+    ))
     run_response = requests.post(f"{base}/job", params={"session_id": session_id}, json=run_req.model_dump(), headers=headers)
     if run_response.status_code != 200:
         print(f"❌ Error running job: {run_response.status_code} {run_response.text}")
@@ -560,13 +579,16 @@ def main():
             print(json.dumps(results_parsed.result_json, indent=2))
 
 
-    # 5. Download a file
+    # 5. Download UV_VERSION.txt if it exists (fallback to README.md)
     print("\n[5] Downloading file...")
-    download_response = requests.get(f"{base}/download", params={"session_id": session_id, "file_path": "README.md"}, headers=headers)
+    target_path = "UV_VERSION.txt"
+    if status == 'succeeded' and results_parsed.output_files and not any(f.path == target_path for f in results_parsed.output_files):
+        target_path = "README.md"
+    download_response = requests.get(f"{base}/download", params={"session_id": session_id, "file_path": target_path}, headers=headers)
     if download_response.status_code != 200:
         print(f"❌ Error downloading file: {download_response.status_code} {download_response.text}")
         download_response.raise_for_status()
-    print(f"✅ File downloaded: {download_response.content}")
+    print(f"✅ File downloaded ({target_path}): {download_response.content}")
 
     # 6. Clean up
     print("\n[6] Deleting session...")
