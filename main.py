@@ -82,7 +82,6 @@ class SessionCreateResponse(BaseModel):
 
 class JobRunRequest(BaseModel):
     prompt: str
-    model: Optional[str] = Field(None, description="Claude model to use (e.g., 'claude-4-sonnet')")
     timeout_s: int = Field(DEFAULT_JOB_TIMEOUT_S, gt=0, le=MAX_JOB_TIMEOUT_S)
 
 class JobRunResponse(BaseModel):
@@ -146,12 +145,9 @@ def execute_job(session_id: str, job_id: str, request: Dict[str, Any]):
 
             # 3. Execute Claude Code (with simple retry for transient failures)
             prompt = request["prompt"]
-            model = request.get("model")
             timeout_s = request.get("timeout_s", DEFAULT_JOB_TIMEOUT_S)
 
             cmd = ["claude", "-p", prompt, "--output-format", "json", "--allowedTools", "Read,Write,Edit,MultiEdit,Bash"]
-            if model:
-                cmd.extend(["-m", model])
 
             env = os.environ.copy()
 

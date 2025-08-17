@@ -49,7 +49,7 @@ uv run modal run main.py::main  # `uv` loads the .env file
   - Body: `{ files: [{ path, content }], ttl_seconds? }`
   - Returns: `{ session_id, created_at, expires_at, input_files: [...] }`
 - `POST /job?session_id=...` → queue a job
-  - Body: `{ prompt, model?, timeout_s? }`
+  - Body: `{ prompt, timeout_s? }`
   - Returns: `{ job_id, session_id, status, created_at }`
 - `GET /job/status?job_id=...` → job status/details
 - `GET /session/results?session_id=...` → list outputs from latest successful job
