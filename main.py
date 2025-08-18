@@ -30,9 +30,9 @@ SECRET_NAME = "claude-code-secret"
 # Operational limits and defaults
 MAX_SESSION_SIZE_MB = 25
 MAX_FILE_COUNT = 200
-DEFAULT_SESSION_TTL_S = 3600  # 1 hour
+DEFAULT_SESSION_TTL_S = 43200  # 12 hours
 DEFAULT_JOB_TIMEOUT_S = 600   # 10 minutes
-MAX_JOB_TIMEOUT_S = 1800      # 30 minutes
+MAX_JOB_TIMEOUT_S = 7200      # 2 hours
 
 # Volume paths
 SESSIONS_ROOT = Path("/data/sessions")
@@ -141,6 +141,20 @@ def execute_job(session_id: str, job_id: str, request: Dict[str, Any]):
             workspace = Path(tmpdir)
 
             # 2. Materialize workspace by copying from Volume
+            # Ensure we see the latest committed files from the session creator
+            try:
+                volume.reload()
+            except Exception:
+                pass
+
+            # Briefly wait for the session input directory to appear in this container
+            # to handle propagation lag between containers after a commit.
+            wait_deadline = time.time() + 10.0
+            while not session_input_dir.exists() and time.time() < wait_deadline:
+                time.sleep(0.2)
+            if not session_input_dir.exists():
+                raise FileNotFoundError(f"Session input directory missing: {session_input_dir}")
+
             shutil.copytree(session_input_dir, workspace, dirs_exist_ok=True)
 
             # 3. Execute Claude Code (with simple retry for transient failures)
