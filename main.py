@@ -1,6 +1,7 @@
 # main.py
 
 import hashlib
+import asyncio
 import json
 import os
 import shutil
@@ -451,9 +452,19 @@ def fastapi_app():
             raise HTTPException(status_code=400, detail="Invalid file path")
         if not str(full_path_resolved).startswith(str(base_dir_resolved)):
             raise HTTPException(status_code=400, detail="Invalid file path")
-
-        if not full_path_resolved.exists() or not full_path_resolved.is_file():
-            raise HTTPException(status_code=404, detail="File not found in session output")
+        
+        # Allow brief propagation lag between containers before returning 404
+        wait_deadline = time.time() + 5.0
+        while True:
+            if full_path_resolved.exists() and full_path_resolved.is_file():
+                break
+            if time.time() >= wait_deadline:
+                raise HTTPException(status_code=404, detail="File not found in session output")
+            try:
+                volume.reload()
+            except Exception:
+                pass
+            await asyncio.sleep(0.2)
 
         def file_iterator(chunk_size: int = 1024 * 64):
             with open(full_path_resolved, "rb") as f:
