@@ -17,7 +17,7 @@ import modal
 from fastapi import FastAPI, HTTPException, Response, Request
 from fastapi.responses import StreamingResponse
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 # --- Constants and Configuration ---
 
@@ -70,6 +70,52 @@ class FileInput(BaseModel):
 class SessionCreateRequest(BaseModel):
     files: List[FileInput]
     ttl_seconds: int = Field(DEFAULT_SESSION_TTL_S, gt=0)
+    env: Optional[Dict[str, str]] = Field(default=None, description="Environment variables to apply for this session")
+
+    # Reserved variables that users cannot override
+    _reserved_env_vars = {
+        "API_KEY",  # service auth between client and API
+        # Claude Code and service operational variables
+        "CLAUDE_CODE_MAX_OUTPUT_TOKENS",
+        "CLAUDE_CODE_USE_BEDROCK",
+        "CLAUDE_CODE_USE_VERTEX",
+        "CLAUDE_CODE_SKIP_BEDROCK_AUTH",
+        "CLAUDE_CODE_SKIP_VERTEX_AUTH",
+        "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC",
+        "CLAUDE_CODE_DISABLE_TERMINAL_TITLE",
+        "DISABLE_AUTOUPDATER",
+        "DISABLE_BUG_COMMAND",
+        "DISABLE_COST_WARNINGS",
+        "DISABLE_ERROR_REPORTING",
+        "DISABLE_NON_ESSENTIAL_MODEL_CALLS",
+        "DISABLE_TELEMETRY",
+        # Network/proxy
+        "HTTP_PROXY",
+        "HTTPS_PROXY",
+        # Modal / internal env protection
+        "MODAL_TOKEN_ID",
+        "MODAL_TOKEN_SECRET",
+    }
+
+    @field_validator("env")
+    @classmethod
+    def validate_env(cls, v: Optional[Dict[str, str]]):
+        if v is None:
+            return None
+        # Coerce keys and values to strings and strip
+        validated: Dict[str, str] = {}
+        for k, val in v.items():
+            if not isinstance(k, str):
+                raise ValueError("All environment variable names must be strings")
+            key = k.strip()
+            if not key:
+                raise ValueError("Environment variable names cannot be empty")
+            if key in cls._reserved_env_vars:
+                raise ValueError(f"Environment variable '{key}' is reserved and cannot be overridden")
+            if not isinstance(val, str):
+                raise ValueError(f"Environment variable '{key}' value must be a string")
+            validated[key] = val
+        return validated
 
 class FileInfo(BaseModel):
     path: str
@@ -165,6 +211,13 @@ def execute_job(session_id: str, job_id: str, request: Dict[str, Any]):
             cmd = ["claude", "-p", prompt, "--output-format", "json", "--allowedTools", "Read,Write,Edit,MultiEdit,Bash"]
 
             env = os.environ.copy()
+            # Merge per-session environment variables (if any)
+            try:
+                session_data_env = sessions_dict.get(session_id, {}).get("env")
+            except Exception:
+                session_data_env = None
+            if isinstance(session_data_env, dict):
+                env.update({str(k): str(v) for k, v in session_data_env.items()})
 
             last_err: Optional[str] = None
             max_attempts = 2
@@ -341,6 +394,7 @@ def fastapi_app():
             "created_at": now.isoformat(),
             "expires_at": expires_at.isoformat(),
             "size_bytes": total_size,
+            "env": (req.env or {}),
         }
 
         return SessionCreateResponse(
