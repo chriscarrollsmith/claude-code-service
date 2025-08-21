@@ -11,7 +11,7 @@ import time
 import uuid
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, ClassVar, Set
 
 import modal
 from fastapi import FastAPI, HTTPException, Response, Request
@@ -73,7 +73,7 @@ class SessionCreateRequest(BaseModel):
     env: Optional[Dict[str, str]] = Field(default=None, description="Environment variables to apply for this session")
 
     # Reserved variables that users cannot override
-    _reserved_env_vars = {
+    RESERVED_ENV_VARS: ClassVar[Set[str]] = {
         "API_KEY",  # service auth between client and API
         # Claude Code and service operational variables
         "CLAUDE_CODE_MAX_OUTPUT_TOKENS",
@@ -110,7 +110,7 @@ class SessionCreateRequest(BaseModel):
             key = k.strip()
             if not key:
                 raise ValueError("Environment variable names cannot be empty")
-            if key in cls._reserved_env_vars:
+            if key in cls.RESERVED_ENV_VARS:
                 raise ValueError(f"Environment variable '{key}' is reserved and cannot be overridden")
             if not isinstance(val, str):
                 raise ValueError(f"Environment variable '{key}' value must be a string")
@@ -222,14 +222,45 @@ def execute_job(session_id: str, job_id: str, request: Dict[str, Any]):
             last_err: Optional[str] = None
             max_attempts = 2
             for attempt in range(1, max_attempts + 1):
-                result = subprocess.run(
-                    cmd,
-                    capture_output=True,
-                    text=True,
-                    cwd=str(workspace),
-                    env=env,
-                    timeout=timeout_s
-                )
+                try:
+                    result = subprocess.run(
+                        cmd,
+                        capture_output=True,
+                        text=True,
+                        cwd=str(workspace),
+                        env=env,
+                        timeout=timeout_s
+                    )
+                except subprocess.TimeoutExpired:
+                    # On timeout, persist whatever is in the workspace to the session output
+                    if os.path.exists(session_output_dir):
+                        shutil.rmtree(session_output_dir)
+                    shutil.copytree(workspace, session_output_dir, dirs_exist_ok=True)
+
+                    # Build manifest for any files that were created before timeout
+                    output_files_manifest = []
+                    for f_path in Path(session_output_dir).glob("**/*"):
+                        if f_path.is_file():
+                            content = f_path.read_bytes()
+                            output_files_manifest.append(
+                                {
+                                    "path": str(f_path.relative_to(session_output_dir)),
+                                    "size_bytes": len(content),
+                                    "sha256": hashlib.sha256(content).hexdigest(),
+                                }
+                            )
+
+                    job_data.update({
+                        "status": "timed_out",
+                        "error": f"Job exceeded the timeout of {request.get('timeout_s', DEFAULT_JOB_TIMEOUT_S)} seconds.",
+                        "finished_at": datetime.now(timezone.utc).isoformat(),
+                        "output_files": output_files_manifest,
+                    })
+                    jobs_dict[job_id] = job_data
+                    # Make output visible to other functions/containers
+                    volume.commit()
+                    return
+
                 if result.returncode == 0:
                     break
                 last_err = result.stderr
