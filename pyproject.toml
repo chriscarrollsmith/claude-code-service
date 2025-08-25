@@ -13,5 +13,10 @@ dependencies = [
 ]
 
 [tool.modal]
+
+[dependency-groups]
+client = [
+    "tenacity>=9.1.2",
+]
 # This section can be used to set default deployment names, etc.
 # For now, we'll keep it simple.

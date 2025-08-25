@@ -119,6 +119,20 @@ curl -sS -H "X-API-Key: $API_KEY" \
   -X DELETE "$BASE/session?session_id=<SESSION_ID>"
 ```
 
+### Python client quickstart
+
+Use the bundled `client.py` to talk to your deployed service from Python.
+
+1) Ensure env vars are set (reusing the values from setup above):
+
+```bash
+export CLAUDE_CODE_API_KEY="$API_KEY"
+export CLAUDE_CODE_BASE_URL="$BASE"
+```
+
+2) Run the minimal example at the bottom of the `client.py` file, which has Claude concurrently write 5 stories about a cat, then downloads the output files.
+
+
 ### Data & limits
 
 - Files are stored under a Modal Volume at `/data/sessions/<session_id>/`.
