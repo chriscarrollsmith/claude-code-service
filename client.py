@@ -483,34 +483,37 @@ if __name__ == "__main__":
     
     # Configure logging to see what's happening
     logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
-    
-    client = ClaudeCodeClient(
-        api_key=os.getenv("CLAUDE_CODE_API_KEY"),
-        base_url=os.getenv("CLAUDE_CODE_BASE_URL"),
-        cleanup_on_exit=True,
-        use_deepseek=False,
-    )
-    
+
     # Execute job with template and inputs
     prompt_template = "Read {filename} and write a short story to {output_filename}"
-    
-    tasks = []
-    for i in range(5):
-        tasks.append(client.execute_job(
-            prompt=prompt_template,
-            inputs={"filename": f"topic_{i}.md", "output_filename": f"story_{i}.md"},
-            input_files=FileInput(
-                path=f"topic_{i}.md",
-                content="The story should be about a cat."
-            ),
-            output_dir=f"output_{i}",
-            timeout_s=120
-        ))
-    
+
+    async def run_one(i: int):
+        async with semaphore:
+            def sync_job() -> str:
+                client = ClaudeCodeClient(
+                    api_key=os.getenv("CLAUDE_CODE_API_KEY"),
+                    base_url=os.getenv("CLAUDE_CODE_BASE_URL"),
+                    cleanup_on_exit=True,
+                    use_deepseek=False,
+                )
+                return client.execute_job(
+                    prompt=prompt_template,
+                    inputs={"filename": f"topic_{i}.md", "output_filename": f"story_{i}.md"},
+                    input_files=[FileInput(
+                        path=f"topic_{i}.md",
+                        content="The story should be about a cat."
+                    )],
+                    output_dir=f"output_{i}",
+                    timeout_s=120,
+                )
+
+            # Run the blocking job in a background thread
+            return await asyncio.to_thread(sync_job)
+
     # Run tasks with concurrency control
     async def run_tasks():
-        async with semaphore:
-            return await asyncio.gather(*tasks, return_exceptions=True)
+        tasks = [run_one(i) for i in range(5)]
+        return await asyncio.gather(*tasks, return_exceptions=True)
     
     results = asyncio.run(run_tasks())
     for result in results:
