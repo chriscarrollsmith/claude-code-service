@@ -208,7 +208,7 @@ def execute_job(session_id: str, job_id: str, request: Dict[str, Any]):
             prompt = request["prompt"]
             timeout_s = request.get("timeout_s", DEFAULT_JOB_TIMEOUT_S)
 
-            cmd = ["claude", "-p", prompt, "--output-format", "json", "--allowedTools", "Read,Write,Edit,MultiEdit,Bash"]
+            cmd = ["claude", "-p", prompt, "--output-format", "json", "--allowedTools", "Read,Write,Edit,MultiEdit,Bash,WebSearch,WebFetch"]
 
             env = os.environ.copy()
             # Merge per-session environment variables (if any)
